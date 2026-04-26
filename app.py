@@ -6,9 +6,11 @@ import time
 import threading
 import socket
 import json
-import fcntl
+import portalocker as fcntl
 import os
 from collections import deque
+from extracting_frames import extract_rice_grains
+from rice_counter_frames import count_rice_grains, update_shared_counts
 
 app = Flask(__name__)
 
@@ -22,9 +24,6 @@ HEALTH_CHECK_INTERVAL = 5  # seconds
 
 SHARED_FILE = "shared_counts.json"
 
-# ============================================
-# GLOBAL STATE
-# ============================================
 system_state = {
     'is_running': False,
     'start_time': None,
@@ -40,10 +39,78 @@ system_state = {
         'error': None
     }
 }
-
-# Thread-safe lock
-counter_lock = threading.Lock()
 state_lock = threading.Lock()
+counter_lock = threading.Lock()
+
+
+# Thread-safe queue for grain images
+grain_queue = deque()
+queue_lock = threading.Lock()
+
+# AI Classification Worker
+class AIClassifier:
+    """Async worker that pulls grain images from queue and classifies them."""
+
+    def __init__(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._classify_loop, daemon=True)
+        self._thread.start()
+
+    def _classify_loop(self):
+        """Background loop: classify grains from queue."""
+        while self._running:
+            grain_image = None
+            with queue_lock:
+                if grain_queue:
+                    grain_image = grain_queue.popleft()
+
+            if grain_image is not None:
+                # Placeholder for model inference
+                rice_type = self._classify_grain(grain_image)
+                self._update_type_count(rice_type)
+            else:
+                time.sleep(0.1)  # No grains to process
+
+    def _classify_grain(self, grain_image):
+        """Placeholder classification logic."""
+        # For now, just print and return a random type
+        print(f"[AI] Classifying grain: {grain_image.shape}")
+        types = ['white', 'brown', 'black', 'chalky', 'broken', 'other']
+        return random.choice(types)
+
+    def _update_type_count(self, rice_type):
+        """Update specific type count in shared file."""
+        with counter_lock:
+            try:
+                # Read current data
+                with open(SHARED_FILE, 'r') as f:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    try:
+                        data = json.load(f)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+                # Update type count
+                if rice_type in data:
+                    data[rice_type] += 1
+                    data['last_update'] = time.time()
+
+                # Write back
+                with open(SHARED_FILE, 'w') as f:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    try:
+                        json.dump(data, f)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass  # Ignore if file issues
+
+    def stop(self):
+        self._running = False
+
+# Initialize AI classifier
+ai_classifier = AIClassifier()
 
 # ============================================
 # SHARED FILE READER (with file locking)
@@ -257,9 +324,21 @@ class PiVideoStream:
     def is_connected(self):
         with self._lock:
             return self._connected and self.cap and self.cap.isOpened()
-
-# Initialize video stream handler
 video_stream = PiVideoStream(PI_IP, PI_STREAM_PORT)
+
+def process_frame_for_rice(frame):
+    """Process frame: extract grains, count, queue for AI."""
+    # Extract 128x128 grain images
+    grain_images = extract_rice_grains(frame)
+
+    # Count grains and update total
+    grain_count = len(grain_images)
+    if grain_count > 0:
+        update_shared_counts(grain_count)
+
+    # Put grain images into queue for AI classification
+    with queue_lock:
+        grain_queue.extend(grain_images)
 
 def generate_video_frames():
     """Generator that yields MJPEG frames from Pi stream."""
@@ -291,6 +370,10 @@ def generate_video_frames():
                 system_state['fps'] = system_state['frame_count']
                 system_state['frame_count'] = 0
                 system_state['last_fps_time'] = current_time
+
+            # Process frame for rice analysis if system is running
+            if system_state['is_running']:
+                process_frame_for_rice(frame)
 
             # Add overlay
             frame = add_overlay(frame)
@@ -410,6 +493,7 @@ def stop_system():
     system_state['is_running'] = False
     system_state['start_time'] = None
     video_stream.disconnect()
+    ai_classifier.stop()
     return jsonify({'success': True, 'status': 'stopped'})
 
 @app.route('/api/shutdown', methods=['POST'])
@@ -417,6 +501,7 @@ def shutdown_system():
     """Shutdown the Raspberry Pi."""
     system_state['is_running'] = False
     video_stream.disconnect()
+    ai_classifier.stop()
     return jsonify({'success': True, 'status': 'shutdown_initiated'})
 
 @app.route('/api/counters')
