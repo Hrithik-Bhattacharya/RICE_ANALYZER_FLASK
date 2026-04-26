@@ -1,7 +1,6 @@
 from flask import Flask, render_template, jsonify, Response
 import cv2
 import numpy as np
-import random
 import time
 import threading
 import socket
@@ -9,8 +8,15 @@ import json
 import portalocker as fcntl
 import os
 from collections import deque
+from pathlib import Path
 from extracting_frames import extract_rice_grains
 from rice_counter_frames import count_rice_grains, update_shared_counts
+
+import torch
+import torch.nn as nn
+from PIL import Image
+from torchvision import models, transforms
+from torchvision.models import EfficientNet_B0_Weights
 
 app = Flask(__name__)
 
@@ -23,6 +29,11 @@ PI_STREAM_PORT = 8000
 HEALTH_CHECK_INTERVAL = 5  # seconds
 
 SHARED_FILE = "shared_counts.json"
+
+# Classifier config
+MODEL_PATH = Path(__file__).parent / "rice_model.pth"
+CLASSES = ["brown", "chalky", "white", "yellow"]   # must match training order
+BROKEN_AREA_THRESHOLD = 300  # px² — synced with count_grains_updated.py
 
 system_state = {
     'is_running': False,
@@ -43,40 +54,98 @@ state_lock = threading.Lock()
 counter_lock = threading.Lock()
 
 
-# Thread-safe queue for grain images
+# Thread-safe queue storing (grain_image, area) tuples
 grain_queue = deque()
 queue_lock = threading.Lock()
 
+
+# ============================================
+# MODEL DEFINITION + TRANSFORMS
+# ============================================
+
+def build_model(num_classes: int) -> nn.Module:
+    model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
+    for p in model.parameters():
+        p.requires_grad = False
+    in_features = model.classifier[1].in_features
+    model.classifier = nn.Sequential(
+        nn.Dropout(0.3),
+        nn.Linear(in_features, 512),
+        nn.BatchNorm1d(512),
+        nn.Dropout(0.3),
+        nn.Linear(512, 256),
+        nn.BatchNorm1d(256),
+        nn.Dropout(0.3),
+        nn.Linear(256, num_classes),
+    )
+    return model
+
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+])
+
+
 # AI Classification Worker
 class AIClassifier:
-    """Async worker that pulls grain images from queue and classifies them."""
+    """Async worker that pulls (grain_image, area) from queue and classifies them."""
 
     def __init__(self):
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._model = self._load_model()
+        self._softmax = nn.Softmax(dim=1)
         self._running = True
         self._thread = threading.Thread(target=self._classify_loop, daemon=True)
         self._thread.start()
+        print(f"[AI] Classifier ready on {self._device}  |  model: {MODEL_PATH}")
+
+    def _load_model(self) -> nn.Module:
+        model = build_model(len(CLASSES)).to(self._device)
+        if MODEL_PATH.exists():
+            model.load_state_dict(torch.load(str(MODEL_PATH), map_location=self._device))
+            print(f"[AI] Loaded weights from {MODEL_PATH}")
+        else:
+            print(f"[AI] WARNING: {MODEL_PATH} not found — using random weights")
+        model.eval()
+        return model
 
     def _classify_loop(self):
         """Background loop: classify grains from queue."""
         while self._running:
-            grain_image = None
+            item = None
             with queue_lock:
                 if grain_queue:
-                    grain_image = grain_queue.popleft()
+                    item = grain_queue.popleft()
 
-            if grain_image is not None:
-                # Placeholder for model inference
-                rice_type = self._classify_grain(grain_image)
+            if item is not None:
+                # Support both (image, area) tuples and plain images
+                if isinstance(item, tuple):
+                    grain_image, area = item
+                else:
+                    grain_image, area = item, -1
+                rice_type = self._classify_grain(grain_image, area)
                 self._update_type_count(rice_type)
             else:
-                time.sleep(0.1)  # No grains to process
+                time.sleep(0.01)
 
-    def _classify_grain(self, grain_image):
-        """Placeholder classification logic."""
-        # For now, just print and return a random type
-        print(f"[AI] Classifying grain: {grain_image.shape}")
-        types = ['white', 'brown', 'black', 'chalky', 'broken', 'other']
-        return random.choice(types)
+    def _classify_grain(self, grain_image: np.ndarray, area: float = -1) -> str:
+        """Classify a single grain crop using EfficientNet-B0.
+
+        Area-based broken detection runs first (requires area from extraction stage).
+        Falls back to model inference for whole-grain type classification.
+        """
+        if 0 < area < BROKEN_AREA_THRESHOLD:
+            return 'broken'
+        try:
+            rgb = cv2.cvtColor(grain_image, cv2.COLOR_BGR2RGB)
+            tensor = val_transform(Image.fromarray(rgb)).unsqueeze(0).to(self._device)
+            with torch.no_grad():
+                probs = self._softmax(self._model(tensor)).cpu().numpy()[0]
+            return CLASSES[int(probs.argmax())]
+        except Exception as e:
+            print(f"[AI] Inference error: {e}")
+            return 'other'
 
     def _update_type_count(self, rice_type):
         """Update specific type count in shared file."""
@@ -142,20 +211,20 @@ class SharedCountsReader:
             # Return cached data or zeros if file not accessible
             return self._cache if self._cache else {
                 "total": 0, "chalky": 0, "white": 0, "brown": 0,
-                "black": 0, "broken": 0, "other": 0, "last_update": 0
+                "yellow": 0, "broken": 0, "other": 0, "last_update": 0
             }
 
     def get_counts(self):
         """Get just the count values."""
         data = self.read()
         return {
-            'total': data.get('total', 0),
+            'total':  data.get('total',  0),
             'chalky': data.get('chalky', 0),
-            'white': data.get('white', 0),
-            'brown': data.get('brown', 0),
-            'black': data.get('black', 0),
+            'white':  data.get('white',  0),
+            'brown':  data.get('brown',  0),
+            'yellow': data.get('yellow', 0),
             'broken': data.get('broken', 0),
-            'other': data.get('other', 0)
+            'other':  data.get('other',  0),
         }
 
 # Initialize shared reader
@@ -327,18 +396,17 @@ class PiVideoStream:
 video_stream = PiVideoStream(PI_IP, PI_STREAM_PORT)
 
 def process_frame_for_rice(frame):
-    """Process frame: extract grains, count, queue for AI."""
-    # Extract 128x128 grain images
+    """Process frame: extract grains, count, queue for AI classification."""
     grain_images = extract_rice_grains(frame)
-
-    # Count grains and update total
     grain_count = len(grain_images)
     if grain_count > 0:
         update_shared_counts(grain_count)
 
-    # Put grain images into queue for AI classification
+    # Queue as (image, area) tuples; support plain images if extract_rice_grains
+    # doesn't return areas (area=-1 disables broken detection)
     with queue_lock:
-        grain_queue.extend(grain_images)
+        for item in grain_images:
+            grain_queue.append(item if isinstance(item, tuple) else (item, -1))
 
 def generate_video_frames():
     """Generator that yields MJPEG frames from Pi stream."""
@@ -544,7 +612,7 @@ def reset_counters():
     try:
         data = {
             "total": 0, "chalky": 0, "white": 0, "brown": 0,
-            "black": 0, "broken": 0, "other": 0, "last_update": time.time()
+            "yellow": 0, "broken": 0, "other": 0, "last_update": time.time()
         }
         with open(SHARED_FILE, 'w') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)

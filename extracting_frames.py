@@ -41,6 +41,6 @@ def extract_rice_grains(image):
             # Resize to 128x128
             resized = cv2.resize(crop, (128, 128))
 
-            grain_images.append(resized)
+            grain_images.append((resized, area))
 
     return grain_images
