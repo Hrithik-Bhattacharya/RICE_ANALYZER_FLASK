@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rice Grain Analyzer - Real-Time</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="particle" style="width: 40px; height: 40px; top: 10%; left: 10%; animation-delay: 0s;"></div>
+    <div class="particle" style="width: 25px; height: 25px; top: 70%; left: 80%; animation-delay: 3s;"></div>
+    <div class="particle" style="width: 35px; height: 35px; top: 40%; left: 90%; animation-delay: 6s;"></div>
+    <div class="particle" style="width: 20px; height: 20px; top: 80%; left: 20%; animation-delay: 9s;"></div>
+
+    <div class="main-container">
+        <!-- Header -->
+        <div class="clay-card header-card">
+            <h1>🌾 Rice Grain Analyzer</h1>
+            <p class="subtitle">Real-Time Detection, Counting & Classification</p>
+            <div class="status-row">
+                <span class="status-badge status-idle" id="systemStatus">System Idle</span>
+                <span class="status-badge status-checking" id="healthStatus">
+                    <span class="health-dot" id="healthDot"></span>
+                    <span id="healthText">Checking Pi...</span>
+                </span>
+            </div>
+            <div class="health-details" id="healthDetails" style="display:none;">
+                <span id="healthLatency"></span>
+                <span id="healthCamera"></span>
+            </div>
+        </div>
+
+        <!-- Video Feed -->
+        <div class="clay-card video-card">
+            <h2 class="section-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5a5a7a" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <circle cx="12" cy="10" r="3"></circle>
+                    <line x1="17" y1="17" x2="17" y2="17"></line>
+                </svg>
+                Live Feed
+            </h2>
+            <div class="video-feed" id="videoFeed">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <p>Camera Feed Standby</p>
+                    <p style="font-size: 0.8rem; margin-top: 5px; opacity: 0.6;">
+                        Waiting for Pi health check...
+                    </p>
+                </div>
+            </div>
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <div class="stat-dot" id="fpsDot"></div>
+                    <span id="fpsValue">0 FPS</span>
+                </div>
+                <div class="stat-item">
+                    <span>⏱️ Uptime: <span id="uptime">00:00:00</span></span>
+                </div>
+                <div class="stat-item">
+                    <span>📡 Pi Camera v2</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="clay-card controls-card">
+            <h2 class="section-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5a5a7a" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 6.34L2.1 2.1m17.8 17.8l-4.24-4.24M6.34 17.66l-4.24 4.24M23 12h-6m-6 0H1m20.07-4.93l-4.24 4.24M6.34 6.34l-4.24-4.24"></path>
+                </svg>
+                System Controls
+            </h2>
+            <div class="control-buttons">
+                <button class="clay-btn btn-start" id="btnStart" onclick="startSystem()">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Start Rice Flow
+                </button>
+                <button class="clay-btn btn-stop" id="btnStop" onclick="stopSystem()" disabled>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                    Stop Rice Flow
+                </button>
+                <button class="clay-btn btn-shutdown" id="btnShutdown" onclick="shutdownSystem()">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path>
+                        <line x1="12" y1="2" x2="12" y2="12"></line>
+                    </svg>
+                    Shutdown Raspberry Pi
+                </button>
+            </div>
+        </div>
+
+        <!-- Counters -->
+        <div class="clay-card counters-card">
+            <h2 class="section-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5a5a7a" stroke-width="2">
+                    <path d="M12 20V10M18 20V4M6 20v-4"></path>
+                </svg>
+                Classification Counters
+            </h2>
+            <div class="counters-grid">
+                <div class="counter-item">
+                    <div class="counter-icon icon-total">🌾</div>
+                    <div class="counter-label">Total Grains</div>
+                    <div class="counter-value" id="countTotal">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-chalky">⚪</div>
+                    <div class="counter-label">Chalky</div>
+                    <div class="counter-value" id="countChalky">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-white">🔘</div>
+                    <div class="counter-label">White</div>
+                    <div class="counter-value" id="countWhite">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-brown">🟤</div>
+                    <div class="counter-label">Brown</div>
+                    <div class="counter-value" id="countBrown">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-black">⚫</div>
+                    <div class="counter-label">Black</div>
+                    <div class="counter-value" id="countBlack">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-broken">💔</div>
+                    <div class="counter-label">Broken</div>
+                    <div class="counter-value" id="countBroken">0</div>
+                </div>
+                <div class="counter-item">
+                    <div class="counter-icon icon-other">❓</div>
+                    <div class="counter-label">Others</div>
+                    <div class="counter-value" id="countOther">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
