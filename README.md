@@ -354,6 +354,17 @@ Polling behavior:
 - Update `worker/processor.py` in `process(frame)`.
 - Keep output schema compatible with `data.json` keys expected by frontend.
 
+### View camera stream service logs on Raspberry Pi
+
+SSH into the Raspberry Pi, then follow the service logs:
+
+```bash
+ssh username@192.168.50.1
+journalctl -u camera-stream.service -f
+```
+
+If your Pi uses a different hostname/IP or username, adjust the `ssh` target accordingly.
+
 ## Optional Developer Commands
 
 From `rice_interface/`:
