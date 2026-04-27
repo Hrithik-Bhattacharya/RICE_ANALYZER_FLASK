@@ -153,11 +153,11 @@ class AIClassifier:
             try:
                 # Read current data
                 with open(SHARED_FILE, 'r') as f:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                    fcntl.lock(f, fcntl.LOCK_SH)
                     try:
                         data = json.load(f)
                     finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                        fcntl.unlock(f)
 
                 # Update type count
                 if rice_type in data:
@@ -166,11 +166,11 @@ class AIClassifier:
 
                 # Write back
                 with open(SHARED_FILE, 'w') as f:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    fcntl.lock(f, fcntl.LOCK_EX)
                     try:
                         json.dump(data, f)
                     finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                        fcntl.unlock(f)
 
             except (FileNotFoundError, json.JSONDecodeError):
                 pass  # Ignore if file issues
@@ -199,14 +199,14 @@ class SharedCountsReader:
         try:
             with open(self.filepath, 'r') as f:
                 # Acquire shared (read) lock - waits if writer has exclusive lock
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                fcntl.lock(f, fcntl.LOCK_SH)
                 try:
                     data = json.load(f)
                     self._cache = data
                     self._last_mtime = os.path.getmtime(self.filepath)
                     return data
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    fcntl.unlock(f)
         except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
             # Return cached data or zeros if file not accessible
             return self._cache if self._cache else {
@@ -615,11 +615,11 @@ def reset_counters():
             "yellow": 0, "broken": 0, "other": 0, "last_update": time.time()
         }
         with open(SHARED_FILE, 'w') as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            fcntl.lock(f, fcntl.LOCK_EX)
             try:
                 json.dump(data, f)
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                fcntl.unlock(f)
         return jsonify({'success': True, 'status': 'reset'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

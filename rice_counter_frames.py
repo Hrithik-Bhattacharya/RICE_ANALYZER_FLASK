@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import json
-import fcntl
+import portalocker as fcntl
 import threading
 import time
 
@@ -59,11 +59,11 @@ def update_shared_counts(new_count):
         try:
             # Read current data
             with open(SHARED_FILE, 'r') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                fcntl.lock(f, fcntl.LOCK_SH)
                 try:
                     data = json.load(f)
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    fcntl.unlock(f)
 
             # Update total
             data['total'] += new_count
@@ -71,22 +71,22 @@ def update_shared_counts(new_count):
 
             # Write back
             with open(SHARED_FILE, 'w') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                fcntl.lock(f, fcntl.LOCK_EX)
                 try:
                     json.dump(data, f)
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    fcntl.unlock(f)
 
         except (FileNotFoundError, json.JSONDecodeError):
             # Initialize if file doesn't exist
             data = {
                 "total": new_count, "chalky": 0, "white": 0, "brown": 0,
-                "black": 0, "broken": 0, "other": 0, "last_update": time.time()
+                "yellow": 0, "broken": 0, "other": 0, "last_update": time.time()
             }
             with open(SHARED_FILE, 'w') as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                fcntl.lock(f, fcntl.LOCK_EX)
                 try:
                     json.dump(data, f)
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    fcntl.unlock(f)
 
