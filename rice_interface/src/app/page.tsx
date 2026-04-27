@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import styles from "./page.module.css";
 
-type CounterKey = "count" | "chalky" | "black" | "white" | "brown" | "broken" | "others";
+type CounterKey = "count" | "chalky" | "yellow" | "white" | "brown" | "broken" | "others";
 
 type CounterData = Record<CounterKey, number>;
 
 const counterCards: Array<{ label: string; key: CounterKey }> = [
   { label: "Count", key: "count" }, // Total will be calculated as the sum of all types
   { label: "Chalky Rice", key: "chalky" },
-  { label: "Black Rice", key: "black" },
+  { label: "Yellow Rice", key: "yellow" },
   { label: "White Rice", key: "white" },
   { label: "Brown Rice", key: "brown" },
   { label: "Broken Rice", key: "broken" },
@@ -28,7 +28,7 @@ export default function Home() {
   const [counterData, setCounterData] = useState<CounterData>({
     count: 0,
     chalky: 0,
-    black: 0,
+    yellow: 0,
     white: 0,
     brown: 0,
     broken: 0,
@@ -80,7 +80,7 @@ export default function Home() {
       setCounterData({
         count: Number(data.count) || 0,
         chalky: Number(data.chalky) || 0,
-        black: Number(data.black) || 0,
+        yellow: Number(data.yellow) || 0,
         white: Number(data.white) || 0,
         brown: Number(data.brown) || 0,
         broken: Number(data.broken) || 0,
@@ -166,7 +166,7 @@ export default function Home() {
       setCounterData({
         count: Number(data.count) || 0,
         chalky: Number(data.chalky) || 0,
-        black: Number(data.black) || 0,
+        yellow: Number(data.yellow) || 0,
         white: Number(data.white) || 0,
         brown: Number(data.brown) || 0,
         broken: Number(data.broken) || 0,
